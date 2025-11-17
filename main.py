@@ -3,8 +3,9 @@ from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from typing import Any, Dict, List
+from datetime import datetime
 
-app = FastAPI(title="Barber Shop Morocco API", version="1.0.0")
+app = FastAPI(title="Barber Shop Morocco API", version="1.1.0")
 
 app.add_middleware(
     CORSMiddleware,
@@ -45,7 +46,7 @@ def shop_info() -> Dict[str, Any]:
         }
     }
 
-# Database booking endpoint
+# Database booking models
 class BookingIn(BaseModel):
     name: str
     phone: str
@@ -54,6 +55,20 @@ class BookingIn(BaseModel):
     preferred_date: str | None = None
     preferred_time: str | None = None
     notes: str | None = None
+
+
+def _serialize_doc(doc: Dict[str, Any]) -> Dict[str, Any]:
+    """Convert Mongo types (ObjectId, datetime) to JSON serializable values."""
+    out: Dict[str, Any] = {}
+    for k, v in doc.items():
+        if k == "_id":
+            out["id"] = str(v)
+        elif isinstance(v, datetime):
+            out[k] = v.isoformat()
+        else:
+            out[k] = v
+    return out
+
 
 @app.post("/api/bookings")
 def create_booking(payload: BookingIn) -> Dict[str, Any]:
@@ -67,6 +82,21 @@ def create_booking(payload: BookingIn) -> Dict[str, Any]:
         return {"status": "ok", "id": inserted_id}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/bookings")
+def list_bookings() -> Dict[str, Any]:
+    """Return recent bookings for admin view."""
+    try:
+        from database import get_documents
+        docs = get_documents("booking", {}, limit=200)
+        items = [_serialize_doc(d) for d in docs]
+        # Sort by created_at desc if present
+        items.sort(key=lambda x: x.get("created_at", ""), reverse=True)
+        return {"items": items, "count": len(items)}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
 
 @app.get("/test")
 def test_database():
@@ -100,6 +130,7 @@ def test_database():
     response["database_url"] = "✅ Set" if os.getenv("DATABASE_URL") else "❌ Not Set"
     response["database_name"] = "✅ Set" if os.getenv("DATABASE_NAME") else "❌ Not Set"
     return response
+
 
 @app.get("/schema")
 def get_schema():
