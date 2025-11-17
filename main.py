@@ -1,8 +1,10 @@
 import os
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel
+from typing import Any, Dict, List
 
-app = FastAPI()
+app = FastAPI(title="Barber Shop Morocco API", version="1.0.0")
 
 app.add_middleware(
     CORSMiddleware,
@@ -14,15 +16,60 @@ app.add_middleware(
 
 @app.get("/")
 def read_root():
-    return {"message": "Hello from FastAPI Backend!"}
+    return {"message": "Morocco Barber API running"}
 
 @app.get("/api/hello")
 def hello():
-    return {"message": "Hello from the backend API!"}
+    return {"message": "Welcome to the Moroccan Barber backend!"}
+
+@app.get("/api/services")
+def list_services() -> List[Dict[str, Any]]:
+    return [
+        {"id": "cut", "name": "Classic Cut", "price": 120, "duration": 30, "desc": "Precision haircut tailored to your style."},
+        {"id": "beard", "name": "Beard Trim", "price": 80, "duration": 20, "desc": "Clean lines and shape with hot towel finish."},
+        {"id": "combo", "name": "Cut + Beard", "price": 180, "duration": 60, "desc": "Complete grooming session."},
+        {"id": "fade", "name": "Skin Fade", "price": 140, "duration": 45, "desc": "Sharp fade with detailed finish."},
+    ]
+
+@app.get("/api/shop")
+def shop_info() -> Dict[str, Any]:
+    return {
+        "name": "Zellige Barber",
+        "tagline": "Crafted Cuts • Moroccan Soul",
+        "address": "Rue Bab Doukkala, Marrakech, Morocco",
+        "phone": "+212 6 12 34 56 78",
+        "hours": {
+            "mon_fri": "10:00 - 20:00",
+            "sat": "10:00 - 18:00",
+            "sun": "Closed"
+        }
+    }
+
+# Database booking endpoint
+class BookingIn(BaseModel):
+    name: str
+    phone: str
+    email: str | None = None
+    service: str
+    preferred_date: str | None = None
+    preferred_time: str | None = None
+    notes: str | None = None
+
+@app.post("/api/bookings")
+def create_booking(payload: BookingIn) -> Dict[str, Any]:
+    try:
+        from database import create_document
+        from schemas import Booking as BookingSchema
+
+        # Validate with full schema (enforces lengths and formats)
+        booking = BookingSchema(**payload.model_dump())
+        inserted_id = create_document("booking", booking)
+        return {"status": "ok", "id": inserted_id}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/test")
 def test_database():
-    """Test endpoint to check if database is available and accessible"""
     response = {
         "backend": "✅ Running",
         "database": "❌ Not Available",
@@ -31,38 +78,41 @@ def test_database():
         "connection_status": "Not Connected",
         "collections": []
     }
-    
     try:
-        # Try to import database module
         from database import db
-        
         if db is not None:
             response["database"] = "✅ Available"
-            response["database_url"] = "✅ Configured"
+            response["database_url"] = "✅ Set" if os.getenv("DATABASE_URL") else "❌ Not Set"
             response["database_name"] = db.name if hasattr(db, 'name') else "✅ Connected"
             response["connection_status"] = "Connected"
-            
-            # Try to list collections to verify connectivity
             try:
                 collections = db.list_collection_names()
-                response["collections"] = collections[:10]  # Show first 10 collections
+                response["collections"] = collections[:10]
                 response["database"] = "✅ Connected & Working"
             except Exception as e:
                 response["database"] = f"⚠️  Connected but Error: {str(e)[:50]}"
         else:
             response["database"] = "⚠️  Available but not initialized"
-            
     except ImportError:
-        response["database"] = "❌ Database module not found (run enable-database first)"
+        response["database"] = "❌ Database module not found"
     except Exception as e:
         response["database"] = f"❌ Error: {str(e)[:50]}"
-    
-    # Check environment variables
-    import os
     response["database_url"] = "✅ Set" if os.getenv("DATABASE_URL") else "❌ Not Set"
     response["database_name"] = "✅ Set" if os.getenv("DATABASE_NAME") else "❌ Not Set"
-    
     return response
+
+@app.get("/schema")
+def get_schema():
+    """Expose Pydantic schemas for the database viewer/tools."""
+    try:
+        import schemas as s
+        return {
+            "booking": s.Booking.model_json_schema(),
+            "user": s.User.model_json_schema(),
+            "product": s.Product.model_json_schema(),
+        }
+    except Exception as e:
+        return {"error": str(e)}
 
 
 if __name__ == "__main__":
